@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: localhub-api
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    disk:
+      name: localhub-sqlite
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: DATABASE_URL
+        value: sqlite:////var/data/localhub.db
+      - key: AUTO_SEED
+        value: true
+      - key: FRONTEND_ORIGINS
+        value: "*"
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_EMBEDDING_MODEL
+        value: text-embedding-3-small
+      - key: OPENAI_CHAT_MODEL
+        value: gpt-4o-mini
+      - key: VECTOR_CACHE_DIR
+        value: /var/data/vector_cache
