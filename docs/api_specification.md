@@ -69,43 +69,7 @@
 
 ---
 
-### 1.3 주변 장소(맛집) 조회
-- **Method:** `GET`
-- **Endpoint:** `/locations/nearby`
-- **Description:** 특정 위도/경도 좌표를 기준으로 반경 N km 이내의 '음식점(contenttypeid: 39)' 목록을 거리순으로 정렬하여 최대 30개 반환합니다.
-
-#### Request (Query Parameters)
-| Parameter | Type | Required | Description | Example |
-|---|---|---|---|---|
-| `lat` | `float` | **Yes** | 기준점의 위도 (Latitude) | `36.3504` |
-| `lon` | `float` | **Yes** | 기준점의 경도 (Longitude) | `127.3845` |
-| `radius` | `float` | No | 탐색 반경 (단위: km, 기본값 2.0, 최대 20.0) | `3.5` |
-
-#### Response (200 OK)
-반환 타입: JSON Array
-```json
-[
-  {
-    "contentid": "2781845",
-    "contenttypeid": 39,
-    "contenttypename": "음식점",
-    "title": "오씨칼국수",
-    "addr1": "대전광역시 동구 옛신탄진로 13",
-    "addr2": "",
-    "mapx": 127.4326,
-    "mapy": 36.3456,
-    "mlevel": "6",
-    "firstimage": "http://...",
-    "tel": "042-627-9972",
-    "distance_km": 1.25
-  }
-]
-```
-- 기본 장소 응답 속성에 **`distance_km` (`float`)** 필드가 포함되며, 기준 좌표로부터의 직선거리(km)를 나타냅니다.
-
----
-
-### 1.4 특정 장소 상세 조회
+### 1.3 특정 장소 상세 조회
 - **Method:** `GET`
 - **Endpoint:** `/locations/{contentid}`
 
@@ -125,7 +89,7 @@
   },
   "detail_info": [],
   "course_stops": [],
-  "nearby_places": [
+  "nearby_restaurants": [
     {
       "contentid": "67890",
       "contenttypeid": 39,
@@ -136,10 +100,11 @@
       "mapy": 36.3700,
       "distance_km": 1.2
     }
-  ]
+  ],
+  "nearby_accommodations": []
 }
 ```
-- **Description:** 특정 장소에 대한 상세 속성(영업시간, 부대시설 등) 및 반복 항목 데이터를 조회합니다.
+- **Description:** 특정 장소에 대한 상세 속성(영업시간, 부대시설 등) 및 반복 항목 데이터를 조회하고, 해당 장소 기준 반경 2km 이내의 **주변 추천 식당(최대 4개) 및 숙소(최대 4개) 정보**를 동적 계산하여 함께 반환합니다.
 
 #### Request (Path Parameter)
 | Parameter | Type | Required | Description | Example |
@@ -201,6 +166,8 @@
   - `subdetailoverview` (`str`): 방문지 개요
   - `subdetailimg` (`str`): 방문지 사진 URL
   - `subdetailalt` (`str`): 대체 텍스트
+- **`nearby_restaurants`** (`list`): 기준 반경 2km 이내의 '음식점(39)' 객체 배열 (거리순 최대 4개). `distance_km` 필드가 포함됩니다.
+- **`nearby_accommodations`** (`list`): 기준 반경 2km 이내의 '숙박(32)' 객체 배열 (거리순 최대 4개). `distance_km` 필드가 포함됩니다.
 
 #### Error Response (404 Not Found)
 ```json
