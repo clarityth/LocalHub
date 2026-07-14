@@ -40,7 +40,7 @@
 ```
 - **`contentid`** (`str`): 장소의 고유 식별자 (한국관광공사 원본 ID)
 - **`contenttypeid`** (`int`): 카테고리 식별 코드
-- **`contenttypename`** (`str`): 카테고리 명칭 ("관광지", "음식점" 등)
+- **`contenttypename`** (`str`): 카테고리 명칭 ("관광지", "문화시설", "축제공연행사", "여행코스", "레포츠", "숙박", "쇼핑", "음식점")
 - **`title`** (`str`): 장소 공식 명칭
 - **`addr1`** (`str`): 기본 도로명/지번 주소
 - **`addr2`** (`str`): 상세 주소 (데이터 부재 시 `""`)
@@ -101,10 +101,21 @@
       "distance_km": 1.2
     }
   ],
-  "nearby_accommodations": []
+  "nearby_accommodations": [
+    {
+      "contentid": "54321",
+      "contenttypeid": 32,
+      "contenttypename": "숙박",
+      "title": "유성 핫스프링 호텔",
+      "addr1": "대전광역시 유성구 온천로",
+      "mapx": 127.3400,
+      "mapy": 36.3550,
+      "distance_km": 1.8
+    }
+  ]
 }
 ```
-- **Description:** 특정 장소에 대한 상세 속성(영업시간, 부대시설 등) 및 반복 항목 데이터를 조회하고, 해당 장소 기준 반경 2km 이내의 **주변 추천 식당(최대 4개) 및 숙소(최대 4개) 정보**를 동적 계산하여 함께 반환합니다.
+- **Description:** 특정 장소에 대한 상세 속성(영업시간, 부대시설, 주차 가능 여부) 및 반복 항목 데이터를 조회하고, 해당 장소 기준 반경 2km 이내의 **주변 추천 식당(최대 4개) 및 숙소(최대 4개) 정보**를 동적 계산하여 함께 반환합니다.
 
 #### Request (Path Parameter)
 | Parameter | Type | Required | Description | Example |
@@ -188,7 +199,7 @@
 #### Request (Query Parameters)
 | Parameter | Type | Required | Description | Example |
 |---|---|---|---|---|
-| `category` | `str` | No | 카테고리 필터 ("자유", "여행 후기", "맛집 추천" 등) | `"여행 후기"` |
+| `category` | `str` | No | 카테고리 필터 ("자유", "여행 후기", "맛집 추천", "축제 정보") | `"여행 후기"` |
 | `q` | `str` | No | 제목, 본문, 연관 장소명 검색 키워드 | `"성심당"` |
 | `search_type` | `str` | No | 검색 대상 ("both"(제목+내용 기본값), "title", "content") | `"title"` |
 | `sort_by` | `str` | No | 정렬 기준 ("latest"(최신순 기본값), "likes"(추천순)) | `"likes"` |
