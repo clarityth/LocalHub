@@ -354,31 +354,26 @@
 
 ---
 
-### 2.6 게시글 추천(좋아요)
+### 2.6 게시글 추천(좋아요) 토글
 - **Method:** `POST`
 - **Endpoint:** `/posts/{post_id}/like`
-- **Description:** 특정 게시글에 대한 추천 수를 상향합니다. 접속 클라이언트의 IP 주소와 `User-Agent` 기반 해싱 알고리즘을 적용하여 단일 대상에 대한 중복 처리를 제어합니다.
+- **Description:** 특정 게시글에 대한 추천(좋아요)을 활성화하거나 취소합니다(토글 방식). 접속 클라이언트의 IP 주소와 `User-Agent` 기반 해싱 알고리즘(`Fingerprint`)을 적용하여 1인당 1회만 반영되도록 제어합니다. 이미 추천한 상태에서 다시 요청하면 추천이 취소됩니다.
 
 #### Request
 - **Path Parameter:** `post_id`
 - *(Body 없음)*
 
 #### Response (200 OK)
+반환 타입: JSON Object
 ```json
 {
   "post_id": 1,
   "like_count": 13,
-  "message": "좋아요가 반영되었습니다."
+  "message": "좋아요가 반영되었습니다.",
+  "is_liked": true
 }
 ```
-
-#### Error Response (409 Conflict)
-식별된 클라이언트의 기 추천 이력이 존재할 경우 반환됩니다.
-```json
-{
-  "detail": "이미 좋아요를 누르셨습니다."
-}
-```
+- **`is_liked`** (`bool`): 현재 추천 상태 (활성화 시 `true`, 취소 시 `false` 반환)
 
 ---
 
