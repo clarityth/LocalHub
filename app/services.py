@@ -172,7 +172,7 @@ class FaissRagIndex:
             self._last_check_time = time.time()
 
     def ensure_built(self, db: Session) -> None:
-        """[성능 개선] 실시간 COUNT 쿼리에 60초 쿨타임(TTL) 적용"""
+        """실시간 COUNT 쿼리에 60초 쿨타임(TTL) 적용"""
         current_time = time.time()
         if current_time - self._last_check_time < 60.0 and self.index is not None:
             return
@@ -428,10 +428,10 @@ def generate_chat_stream(prompt: str, metadata: dict, fallback_text: str, histor
         client = OpenAI(api_key=settings.openai_api_key)
         system_prompt = (
             "너는 대전/충청권 지역 정보 공유 서비스 LocalHub의 한국어 챗봇이다. "
-            "제공된 컨텍스트 안에서만 답변하고, 사용자의 요청에 대해 정확하고 많은 정보를 제공해야한다. 단, 좌표 정보는 제외한다."
+            "제공된 컨텍스트 안에서만 답변하고, 사용자의 요청에 대해 정확하고 많은 정보를 제공해야한다. 단, 좌표 정보는 제외한다. "
             "추천 시 2~4개를 이유와 함께 제공한다. "
-            "[커뮤니티 게시글 검색 결과]에 의미 있는 내용이나 사용자 후기가 있다면 이를 요약하여 답변에 포함시키고, '커뮤니티 유저들에 따르면~' 등의 표현으로 실제 사용자 반응임을 명시하라. "
-            "답변은 개조식으로 하며, 마크다운 문법을 적극 활용하라."
+            "답변은 개조식으로 하며, 마크다운 문법을 적극 활용하라. "
+            "특히 제공된 정보에 이미지 URL이 포함되어 있다면 이미지가 렌더링되도록 마크다운 형태로 텍스트 내에 삽입하라."
         )
         messages = [{"role": "system", "content": system_prompt}]
         if history:
@@ -476,7 +476,22 @@ def _location_context(locations: list[Location]) -> str:
         except json.JSONDecodeError: type_fields = {}
         info_items = [{"name": it.info_name, "text": it.info_text} for it in getattr(loc, 'info_items', []) if it.info_name and it.info_text]
         if info_items: type_fields["info"] = info_items
-        rows.append(json.dumps({"contentid": loc.content_id, "contenttypeid": loc.content_type_id, "title": loc.title, "addr1": loc.addr1, "mapx": loc.mapx, "mapy": loc.mapy, "tel": loc.tel, "fields": type_fields}, ensure_ascii=False))
+        
+        # 데이터베이스에서 로드한 이미지 데이터를 확보
+        img_url = loc.firstimage or loc.firstimage2 or ""
+        
+        # LLM 프롬프트 생성용 JSON에 image 속성 포함
+        rows.append(json.dumps({
+            "contentid": loc.content_id, 
+            "contenttypeid": loc.content_type_id, 
+            "title": loc.title, 
+            "addr1": loc.addr1, 
+            "mapx": loc.mapx, 
+            "mapy": loc.mapy, 
+            "tel": loc.tel, 
+            "image": img_url, 
+            "fields": type_fields
+        }, ensure_ascii=False))
     return "\n".join(rows)
 
 def _rag_context(rag_hits: list[RagHit]) -> str:
