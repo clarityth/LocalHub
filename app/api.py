@@ -1,8 +1,3 @@
-"""
-LocalHub 통합 API 라우터 모듈.
-장소 목록, 게시판 커뮤니티, 그리고 AI 챗봇 엔드포인트를 제공합니다.
-"""
-
 from hashlib import sha256
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -24,9 +19,7 @@ from app.services import (
 
 router = APIRouter(tags=["api"])
 
-# ==========================================
-# 1. Locations API
-# ==========================================
+# 지도 API
 
 @router.get("/locations", response_model=list[LocationListItem])
 def list_locations(
@@ -87,9 +80,7 @@ def get_location(contentid: str, db: Session = Depends(get_db)) -> dict:
     result["nearby_accommodations"] = nearby_accommodations[:4]
     return result
 
-# ==========================================
-# 2. Posts API (Community)
-# ==========================================
+# 커뮤니티 API
 
 def _post_out(post: Post, include_content: bool = True) -> dict:
     return {
@@ -154,7 +145,7 @@ def _client_fingerprint(request: Request, post_id: int) -> str:
 
 @router.post("/posts/{post_id}/like", response_model=LikeOut)
 def like_single_post(post_id: int, request: Request, db: Session = Depends(get_db)) -> dict:
-    """단일 게시글에 좋아요를 누르거나 취소합니다 (클라이언트당 1회 토글)."""
+    """단일 게시글에 좋아요를 누르거나 취소합니다 (핑거프린트 필터링으로 클라이언트당 1회 토글)."""
     post = db.get(Post, post_id)
     if not post: raise HTTPException(status_code=404, detail="Post not found")
     fp = _client_fingerprint(request, post_id)
@@ -194,9 +185,7 @@ def delete_existing_post(post_id: int, payload: PasswordBody, db: Session = Depe
     db.commit()
     return {"message": "게시글이 삭제되었습니다."}
 
-# ==========================================
-# 3. AI Chat API
-# ==========================================
+# 챗봇 API
 
 @router.post("/chat")
 def chat_endpoint(payload: ChatRequest, db: Session = Depends(get_db)):

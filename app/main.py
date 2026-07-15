@@ -1,8 +1,3 @@
-"""
-LocalHub API의 메인 애플리케이션 모듈.
-FastAPI 앱의 인스턴스를 생성하고, 미들웨어, 라우터, 수명 주기(lifespan) 이벤트 등을 설정합니다.
-"""
-
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -19,7 +14,7 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """애플리케이션 수명 주기 관리 (DB 생성, 초기 데이터 세딩, FAISS 빌드)."""
+    """애플리케이션 수명 주기 관리 (DB 생성, 초기 데이터 세딩, FAISS 빌드)"""
     with SessionLocal() as db:
         create_schema(db)
         if settings.auto_seed:

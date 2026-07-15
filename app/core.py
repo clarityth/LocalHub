@@ -1,8 +1,3 @@
-"""
-LocalHub 핵심 코어 모듈.
-환경 설정(Config)과 데이터베이스(Database) 연동 객체를 통합하여 제공합니다.
-"""
-
 from collections.abc import Generator
 from functools import lru_cache
 from pathlib import Path

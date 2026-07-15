@@ -1,8 +1,3 @@
-"""
-데이터베이스 스키마 생성 및 초기 데이터 적재(Seed) 모듈.
-제공된 JSON 파일 및 PDF 텍스트 데이터를 읽어 DB에 저장합니다.
-"""
-
 import json
 from pathlib import Path
 from typing import Any

@@ -1,10 +1,6 @@
-"""
-LocalHub 비즈니스 로직 및 서비스 모듈.
-AI 생성, FAISS 벡터 검색, 텍스트 처리, 직렬화, 위치 계산 등의 유틸리티를 포함합니다.
-"""
-
 import json
 import re
+import time
 from dataclasses import dataclass
 from functools import lru_cache
 from hashlib import sha256
@@ -12,6 +8,7 @@ from math import asin, cos, radians, sin, sqrt
 from pathlib import Path
 from threading import Lock
 from typing import Any, Generator
+from concurrent.futures import ThreadPoolExecutor
 
 import faiss
 import numpy as np
@@ -22,19 +19,17 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 from app.core import REPO_ROOT, get_settings
 from app.models import CourseStop, Location, LocationInfoItem, Post, RagChunk
 
-# ---------------------------------------------------------
-# Serializers
-# ---------------------------------------------------------
+# JSON 직렬화
 
 def _loads(value: str, fallback: Any) -> Any:
-    """JSON 문자열을 파싱합니다. 실패 시 fallback 반환."""
+    """JSON 문자열을 파싱합니다. 실패 시 fallback 반환"""
     try:
         return json.loads(value) if value else fallback
     except json.JSONDecodeError:
         return fallback
 
 def location_list_item(location: Location) -> dict[str, Any]:
-    """목록 조회용 장소 데이터 (가벼운 메타데이터)."""
+    """목록 조회용 장소 데이터 (가벼운 메타데이터)"""
     return {
         "contentid": location.content_id,
         "contenttypeid": location.content_type_id,
@@ -50,7 +45,7 @@ def location_list_item(location: Location) -> dict[str, Any]:
     }
 
 def location_detail(location: Location) -> dict[str, Any]:
-    """장소 상세 데이터 (반복 필드 및 JSON 파싱 포함)."""
+    """장소 상세 데이터 (반복 필드 및 JSON 파싱 포함)"""
     data = location_list_item(location)
     raw_fields = strip_html_from_dict(_loads(location.type_fields_json, {}))
     
@@ -80,9 +75,7 @@ def course_stop(item: CourseStop) -> dict[str, Any]:
         "subdetailalt": strip_html(item.sub_alt),
     }
 
-# ---------------------------------------------------------
-# Text & Geo Utilities
-# ---------------------------------------------------------
+# Text & Geo 유틸
 
 def strip_html(text: str | None) -> str:
     """텍스트 내의 HTML 태그(<br>, <b> 등)를 제거합니다."""
@@ -112,8 +105,9 @@ CATEGORY_HINTS = {
     "쇼핑": 38, "시장": 38, "맛집": 39, "음식": 39, "식당": 39, "카페": 39,
 }
 
+@lru_cache(maxsize=512)
 def tokenize(text: str) -> list[str]:
-    """기본 키워드 검색을 위한 간단한 토큰화."""
+    """기본 키워드 검색을 위한 간단한 토큰화 (LRU 캐시 적용)."""
     tokens = re.findall(r"[0-9A-Za-z가-힣]+", text.lower())
     return [token for token in tokens if len(token) > 1]
 
@@ -133,10 +127,7 @@ def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     c = 2 * asin(sqrt(a))
     return radius * c
 
-# ---------------------------------------------------------
 # Vector Index (FAISS)
-# ---------------------------------------------------------
-
 @dataclass
 class RagHit:
     doc_id: str
@@ -148,7 +139,7 @@ class RagHit:
     content_id: str | None = None
 
 class FaissRagIndex:
-    """FAISS를 활용한 RAG 인덱스 관리자."""
+    """FAISS를 활용한 RAG 인덱스 관리자"""
     def __init__(self) -> None:
         self.dimension = 0
         self.index: faiss.IndexFlatIP | None = None
@@ -157,6 +148,7 @@ class FaissRagIndex:
         self.fingerprint = ""
         self._lock = Lock()
         self._doc_count: int = 0
+        self._last_check_time: float = 0.0 # 성능 개선: 캐시 확인용 타이머
 
     def build(self, db: Session) -> None:
         documents = _load_documents(db)
@@ -177,15 +169,24 @@ class FaissRagIndex:
             self.documents = {doc.doc_id: doc for doc in documents}
             self.fingerprint = fingerprint
             self._doc_count = len(documents)
+            self._last_check_time = time.time()
 
     def ensure_built(self, db: Session) -> None:
+        """[성능 개선] 실시간 COUNT 쿼리에 60초 쿨타임(TTL) 적용"""
+        current_time = time.time()
+        if current_time - self._last_check_time < 60.0 and self.index is not None:
+            return
+
         current_count = (
             (db.scalar(select(func.count(RagChunk.id))) or 0)
             + (db.scalar(select(func.count(Location.content_id))) or 0)
         )
+        
         with self._lock:
+            self._last_check_time = time.time()
             if self.index is not None and getattr(self, '_doc_count', 0) == current_count:
                 return
+        
         self.build(db)
 
     def search(self, db: Session, query: str, limit: int = 4) -> list[RagHit]:
@@ -304,12 +305,10 @@ def _hash_embed(text: str, dimension: int = 512) -> np.ndarray:
 _rag_index = FaissRagIndex()
 def get_rag_index() -> FaissRagIndex: return _rag_index
 
-# ---------------------------------------------------------
-# Search Logic
-# ---------------------------------------------------------
+# 검색 로직
 
 def fallback_search_locations(db: Session, message: str, limit: int = 5) -> list[Location]:
-    """벡터 검색 실패 시 사용하는 키워드 기반 위치 검색."""
+    """[성능 개선] 루프 내 무거운 연산 최소화"""
     tokens = tokenize(message)
     content_type_id = infer_content_type(message)
     if not tokens and content_type_id is None:
@@ -320,19 +319,26 @@ def fallback_search_locations(db: Session, message: str, limit: int = 5) -> list
         stmt = stmt.where(Location.content_type_id == content_type_id)
 
     locations = db.scalars(stmt).all()
+    if not tokens:
+        return locations[:limit]
+
     scored: list[tuple[int, Location]] = []
     for location in locations:
-        blob = " ".join([location.title, location.addr1, location.addr2, location.tel, location.type_fields_json]).lower()
-        score = sum(3 if token in location.title.lower() else 1 for token in tokens if token in blob)
-        if content_type_id and location.content_type_id == content_type_id: score += 2
-        if score > 0: scored.append((score, location))
+        # DB 컬럼을 단순 연결 후 한 번만 lower 처리 (메모리 단편화 감소)
+        blob = f"{location.title or ''} {location.addr1 or ''} {location.addr2 or ''} {location.tel or ''} {location.type_fields_json or ''}".lower()
+        title_lower = (location.title or "").lower()
+        
+        score = sum(3 if token in title_lower else 1 for token in tokens if token in blob)
+        if score > 0:
+            if content_type_id and location.content_type_id == content_type_id: 
+                score += 2
+            scored.append((score, location))
 
-    scored.sort(key=lambda item: item[0], reverse=True)
-    if scored: return [location for _, location in scored[:limit]]
+    if scored: 
+        scored.sort(key=lambda item: item[0], reverse=True)
+        return [location for _, location in scored[:limit]]
 
-    fallback_stmt = select(Location).options(joinedload(Location.content_type)).limit(limit)
-    if content_type_id: fallback_stmt = fallback_stmt.where(Location.content_type_id == content_type_id)
-    return list(db.scalars(fallback_stmt).all())
+    return locations[:limit]
 
 def search_rag_chunks(db: Session, message: str, limit: int = 8) -> list[RagHit]:
     hits = get_rag_index().search(db, message, limit=limit)
@@ -358,6 +364,7 @@ def match_locations_from_chunks(db: Session, hits: list[RagHit], limit: int = 5)
 
     text = "\n".join(hit.content for hit in hits)
     candidates = db.scalars(select(Location).options(joinedload(Location.content_type))).all()
+    # [성능 개선] text.count()와 같은 중복 검색 방지, 단순 포함 여부만 체크
     matched = [(len(loc.title), loc) for loc in candidates if loc.title and loc.title in text]
     matched.sort(key=lambda item: item[0], reverse=True)
     
@@ -389,18 +396,16 @@ def serialize_sources(rag_hits: list[RagHit], posts: list[Post] | None = None) -
 def serialize_referenced_items(locations: list[Location]) -> list[dict]:
     return [location_list_item(loc) for loc in locations]
 
-# ---------------------------------------------------------
-# AI Chat
-# ---------------------------------------------------------
+# AI 챗봇
 
 def generate_chat_answer(message: str, locations: list[Location], rag_hits: list[RagHit], posts: list[Post], history: list[dict] | None = None) -> str:
-    """사용자 메시지와 문맥을 바탕으로 OpenAI 답변을 생성합니다 (Legacy)."""
+    """사용자 메시지와 문맥을 바탕으로 OpenAI 답변을 생성합니다"""
     settings = get_settings()
     if not settings.openai_api_key:
         return _fallback_answer(locations, rag_hits, posts)
 
     client = OpenAI(api_key=settings.openai_api_key)
-    messages = [{"role": "system", "content": "너는 대전/충청권 지역 정보 공유 서비스 LocalHub의 한국어 챗봇이다. 제공된 컨텍스트 안에서만 답변하고, 지도 좌표가 구조화 장소 데이터에 있는 경우만 표시 가능하다고 말한다. 추천 시 2~4개를 간결하게 이유와 함께 제공한다."}]
+    messages = [{"role": "system", "content": "너는 대전/충청권 지역 정보 공유 서비스 LocalHub의 한국어 챗봇이다. 제공된 컨텍스트 안에서만 답변하고, 추천 시 2~4개를 요약된 이유와 함께 제공한다. 단, 좌표 정보는 제외한다. 답변은 개조식으로 하며, 마크다운 문법을 적극 활용하라."}]
     if history:
         for msg in history[-6:]: messages.append({"role": msg["role"], "content": msg["content"]})
     
@@ -423,10 +428,10 @@ def generate_chat_stream(prompt: str, metadata: dict, fallback_text: str, histor
         client = OpenAI(api_key=settings.openai_api_key)
         system_prompt = (
             "너는 대전/충청권 지역 정보 공유 서비스 LocalHub의 한국어 챗봇이다. "
-            "제공된 컨텍스트 안에서만 답변하고, 지도 좌표가 구조화 장소 데이터에 있는 경우만 표시 가능하다고 말한다. "
-            "추천 시 2~4개를 간결하게 이유와 함께 제공한다. "
-            "특히 [커뮤니티 게시글 검색 결과]에 의미 있는 내용이나 사용자 후기가 있다면 반드시 이를 요약하여 답변에 포함시키고, '커뮤니티 유저들에 따르면~' 등의 표현으로 실제 사용자 반응임을 명시하라. "
-            "답변에 마크다운 문법을 적극 활용하라."
+            "제공된 컨텍스트 안에서만 답변하고, 사용자의 요청에 대해 정확하고 많은 정보를 제공해야한다. 단, 좌표 정보는 제외한다."
+            "추천 시 2~4개를 이유와 함께 제공한다. "
+            "[커뮤니티 게시글 검색 결과]에 의미 있는 내용이나 사용자 후기가 있다면 이를 요약하여 답변에 포함시키고, '커뮤니티 유저들에 따르면~' 등의 표현으로 실제 사용자 반응임을 명시하라. "
+            "답변은 개조식으로 하며, 마크다운 문법을 적극 활용하라."
         )
         messages = [{"role": "system", "content": system_prompt}]
         if history:
