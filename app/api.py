@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload, selectinload
+import logging
 
 from app.core import get_db
 from app.models import Location, Post, PostLike, utc_now
@@ -18,6 +19,8 @@ from app.services import (
 )
 
 router = APIRouter(tags=["api"])
+
+logger = logging.getLogger(__name__)
 
 # 지도 API
 
@@ -124,19 +127,31 @@ def get_single_post(post_id: int, db: Session = Depends(get_db)) -> dict:
     """단일 게시글의 상세 내용을 조회하고 조회수를 1 증가시킵니다."""
     post = db.get(Post, post_id)
     if not post: raise HTTPException(status_code=404, detail="Post not found")
-    post.view_count += 1
-    db.commit()
-    db.refresh(post)
-    return _post_out(post)
+    try:
+        post.view_count += 1
+        db.commit()
+        db.refresh(post)
+        return _post_out(post)
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.exception("Failed to increment view_count for post %s: %s", post_id, str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.post("/posts", response_model=PostCreateOut, status_code=201)
 def create_new_post(payload: PostCreate, db: Session = Depends(get_db)) -> dict:
     """새로운 익명 게시글을 작성합니다."""
     post = Post(title=payload.title, place_name=payload.place, content=payload.content, category=payload.category, content_id=payload.contentid, password=payload.password)
-    db.add(post)
-    db.commit()
-    db.refresh(post)
-    return {"id": post.id, "message": "게시글이 성공적으로 등록되었습니다."}
+    try:
+        db.add(post)
+        db.commit()
+        db.refresh(post)
+        return {"id": post.id, "message": "게시글이 성공적으로 등록되었습니다."}
+    except Exception as e:
+        db.rollback()
+        logger.exception("Failed to create post: %s", str(e))
+        raise HTTPException(status_code=500, detail="게시글 생성 중 내부 오류가 발생했습니다.")
 
 def _client_fingerprint(request: Request, post_id: int) -> str:
     ip = request.client.host if request.client else "unknown"
@@ -149,19 +164,26 @@ def like_single_post(post_id: int, request: Request, db: Session = Depends(get_d
     post = db.get(Post, post_id)
     if not post: raise HTTPException(status_code=404, detail="Post not found")
     fp = _client_fingerprint(request, post_id)
-    existing = db.scalar(select(PostLike).where(PostLike.post_id == post_id, PostLike.fingerprint == fp))
-    if existing:
-        db.delete(existing)
-        post.like_count -= 1
-        db.commit()
-        db.refresh(post)
-        return {"post_id": post.id, "like_count": post.like_count, "message": "좋아요가 취소되었습니다.", "is_liked": False}
-    else:
-        db.add(PostLike(post_id=post_id, fingerprint=fp))
-        post.like_count += 1
-        db.commit()
-        db.refresh(post)
-        return {"post_id": post.id, "like_count": post.like_count, "message": "좋아요가 반영되었습니다.", "is_liked": True}
+    try:
+        existing = db.scalar(select(PostLike).where(PostLike.post_id == post_id, PostLike.fingerprint == fp))
+        if existing:
+            db.delete(existing)
+            post.like_count -= 1
+            db.commit()
+            db.refresh(post)
+            return {"post_id": post.id, "like_count": post.like_count, "message": "좋아요가 취소되었습니다.", "is_liked": False}
+        else:
+            db.add(PostLike(post_id=post_id, fingerprint=fp))
+            post.like_count += 1
+            db.commit()
+            db.refresh(post)
+            return {"post_id": post.id, "like_count": post.like_count, "message": "좋아요가 반영되었습니다.", "is_liked": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.exception("Failed to toggle like for post %s: %s", post_id, str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.put("/posts/{post_id}", response_model=MessageOut)
 def update_existing_post(post_id: int, payload: PostUpdate, db: Session = Depends(get_db)) -> dict[str, str]:
@@ -169,11 +191,18 @@ def update_existing_post(post_id: int, payload: PostUpdate, db: Session = Depend
     post = db.get(Post, post_id)
     if not post: raise HTTPException(status_code=404, detail="Post not found")
     if post.password != payload.password: raise HTTPException(status_code=403, detail="Password does not match")
-    for field, value in {"title": payload.title, "place_name": payload.place, "content": payload.content, "category": payload.category, "content_id": payload.contentid}.items():
-        if value is not None: setattr(post, field, value)
-    post.updated_at = utc_now()
-    db.commit()
-    return {"message": "게시글이 성공적으로 수정되었습니다."}
+    try:
+        for field, value in {"title": payload.title, "place_name": payload.place, "content": payload.content, "category": payload.category, "content_id": payload.contentid}.items():
+            if value is not None: setattr(post, field, value)
+        post.updated_at = utc_now()
+        db.commit()
+        return {"message": "게시글이 성공적으로 수정되었습니다."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.exception("Failed to update post %s: %s", post_id, str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.delete("/posts/{post_id}", response_model=MessageOut)
 def delete_existing_post(post_id: int, payload: PasswordBody, db: Session = Depends(get_db)) -> dict[str, str]:
@@ -181,42 +210,53 @@ def delete_existing_post(post_id: int, payload: PasswordBody, db: Session = Depe
     post = db.get(Post, post_id)
     if not post: raise HTTPException(status_code=404, detail="Post not found")
     if post.password != payload.password: raise HTTPException(status_code=403, detail="Password does not match")
-    db.delete(post)
-    db.commit()
-    return {"message": "게시글이 삭제되었습니다."}
+    try:
+        db.delete(post)
+        db.commit()
+        return {"message": "게시글이 삭제되었습니다."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.exception("Failed to delete post %s: %s", post_id, str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 # 챗봇 API
 
 @router.post("/chat")
 def chat_endpoint(payload: ChatRequest, db: Session = Depends(get_db)):
     """사용자의 메시지를 받아 FAISS 검색 후 OpenAI 챗봇 스트리밍 응답을 반환합니다."""
-    from app.services import search_rag_chunks, match_locations_from_chunks, search_posts, fallback_search_locations, _build_prompt, serialize_referenced_items, serialize_sources, _fallback_answer
-    
-    rag_hits = search_rag_chunks(db, payload.message)
-    chunk_locations = match_locations_from_chunks(db, rag_hits, limit=8)
-    posts = search_posts(db, payload.message, limit=3)
+    from app.services import search_rag_chunks, match_locations_from_chunks, search_posts, fallback_search_locations, _build_prompt, serialize_referenced_items, serialize_sources, _fallback_answer, generate_chat_stream
 
-    direct_locations = []
-    if not chunk_locations:
-        direct_locations = fallback_search_locations(db, payload.message, limit=8)
+    try:
+        rag_hits = search_rag_chunks(db, payload.message)
+        chunk_locations = match_locations_from_chunks(db, rag_hits, limit=8)
+        posts = search_posts(db, payload.message, limit=3)
 
-    seen = set()
-    referenced_items = []
-    for loc in [*chunk_locations, *direct_locations]:
-        if loc.content_id not in seen:
-            seen.add(loc.content_id)
-            referenced_items.append(loc)
+        direct_locations = []
+        if not chunk_locations:
+            direct_locations = fallback_search_locations(db, payload.message, limit=8)
 
-    prompt = _build_prompt(payload.message, referenced_items, rag_hits, posts)
-    metadata = {
-        "type": "metadata",
-        "referenced_items": serialize_referenced_items(referenced_items[:5]),
-        "sources": serialize_sources(rag_hits, posts),
-    }
-    fallback_text = _fallback_answer(referenced_items, rag_hits, posts)
+        seen = set()
+        referenced_items = []
+        for loc in [*chunk_locations, *direct_locations]:
+            if loc.content_id not in seen:
+                seen.add(loc.content_id)
+                referenced_items.append(loc)
 
-    history_dicts = [{"role": m.role, "content": m.content} for m in payload.history]
-    
-    from app.services import generate_chat_stream
-    stream = generate_chat_stream(prompt, metadata, fallback_text, history=history_dicts)
-    return StreamingResponse(stream, media_type="text/event-stream")
+        prompt = _build_prompt(payload.message, referenced_items, rag_hits, posts)
+        metadata = {
+            "type": "metadata",
+            "referenced_items": serialize_referenced_items(referenced_items[:5]),
+            "sources": serialize_sources(rag_hits, posts),
+        }
+        fallback_text = _fallback_answer(referenced_items, rag_hits, posts)
+
+        history_dicts = [{"role": m.role, "content": m.content} for m in payload.history]
+        stream = generate_chat_stream(prompt, metadata, fallback_text, history=history_dicts)
+        return StreamingResponse(stream, media_type="text/event-stream")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Chat endpoint failed: %s", str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
