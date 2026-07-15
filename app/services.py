@@ -1,6 +1,7 @@
 import json
 import re
 import time
+import logging
 from dataclasses import dataclass
 from functools import lru_cache
 from hashlib import sha256
@@ -18,6 +19,41 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.core import REPO_ROOT, get_settings
 from app.models import CourseStop, Location, LocationInfoItem, Post, RagChunk
+
+logger = logging.getLogger(__name__)
+
+# OpenAI call retry / monitoring settings
+OPENAI_MAX_RETRIES = 3
+OPENAI_BACKOFF_FACTOR = 0.8
+
+# Simple in-memory metrics for OpenAI usage (requests, total_chars)
+_openai_metrics: dict[str, int] = {"requests": 0, "chars": 0}
+
+def _retry_call(func, *args, retries: int | None = None, backoff: float | None = None, **kwargs):
+    """단순한 재시도 래퍼: 예외 발생 시 지수 백오프와 함께 재시도합니다.
+
+    주의: 스트리밍 제너레이터 자체의 반복 중 발생하는 예외는
+    호출 이후의 반복에서 처리해야 합니다.
+    """
+    if retries is None:
+        retries = OPENAI_MAX_RETRIES
+    if backoff is None:
+        backoff = OPENAI_BACKOFF_FACTOR
+
+    last_exc = None
+    for attempt in range(1, retries + 1):
+        try:
+            _openai_metrics["requests"] += 1
+            return func(*args, **kwargs)
+        except Exception as e:
+            last_exc = e
+            logger.warning("OpenAI call failed (attempt %d/%d): %s", attempt, retries, str(e))
+            if attempt < retries:
+                sleep_for = backoff * (2 ** (attempt - 1))
+                logger.info("Retrying after %.2fs...", sleep_for)
+                time.sleep(sleep_for)
+    # 모든 재시도 실패
+    raise last_exc
 
 # JSON 직렬화
 
@@ -220,8 +256,15 @@ class FaissRagIndex:
             batch_size = 100
             for index in range(0, len(texts), batch_size):
                 batch = texts[index : index + batch_size]
-                response = client.embeddings.create(model=settings.openai_embedding_model, input=batch)
-                vectors.extend(item.embedding for item in response.data)
+                # 모니터링: 요청 크기 로깅
+                _openai_metrics["chars"] += sum(len(t) for t in batch)
+                try:
+                    response = _retry_call(client.embeddings.create, model=settings.openai_embedding_model, input=batch)
+                    vectors.extend(item.embedding for item in response.data)
+                except Exception as e:
+                    logger.exception("Embedding call failed after retries: %s", str(e))
+                    # 임베딩 실패 시 로컬 해시 임베딩으로 안전하게 대체
+                    vectors.extend(_hash_embed(t) for t in batch)
             array = np.array(vectors, dtype="float32")
         else:
             array = np.vstack([_hash_embed(text) for text in texts]).astype("float32")
@@ -403,15 +446,25 @@ def generate_chat_answer(message: str, locations: list[Location], rag_hits: list
     settings = get_settings()
     if not settings.openai_api_key:
         return _fallback_answer(locations, rag_hits, posts)
-
     client = OpenAI(api_key=settings.openai_api_key)
-    messages = [{"role": "system", "content": "너는 대전/충청권 지역 정보 공유 서비스 LocalHub의 한국어 챗봇이다. 제공된 컨텍스트 안에서만 답변하고, 추천 시 2~4개를 요약된 이유와 함께 제공한다. 단, 좌표 정보는 제외한다. 답변은 개조식으로 하며, 마크다운 문법을 적극 활용하라."}]
+    messages = [{"role": "system", "content": "너는 대전 놀거리 한국어 챗봇 꿈돌이다. 제공된 컨텍스트 안에서만 답변하고, 추천 시 2~4개를 요약된 이유와 함께 제공한다. 단, 좌표 정보는 제외한다. 답변은 개조식으로 하며, 마크다운 문법을 적극 활용하고, 제공된 정보에 이미지 URL이 포함되어 있다면 이미지가 렌더링되도록 마크다운 형태로 텍스트 내에 삽입하라."}]
     if history:
         for msg in history[-6:]: messages.append({"role": msg["role"], "content": msg["content"]})
-    
+
     messages.append({"role": "user", "content": _build_prompt(message, locations, rag_hits, posts)})
-    response = client.chat.completions.create(model=settings.openai_chat_model, messages=messages, temperature=0.4)
-    return response.choices[0].message.content or ""
+
+    # 모니터링: 요청 문자수 집계
+    try:
+        _openai_metrics["chars"] += sum(len(m.get("content", "")) for m in messages)
+    except Exception:
+        pass
+
+    try:
+        response = _retry_call(client.chat.completions.create, model=settings.openai_chat_model, messages=messages, temperature=0.4)
+        return response.choices[0].message.content or ""
+    except Exception as e:
+        logger.exception("OpenAI chat completion failed: %s", str(e))
+        return _fallback_answer(locations, rag_hits, posts)
 
 def generate_chat_stream(prompt: str, metadata: dict, fallback_text: str, history: list[dict] | None = None) -> Generator[str, None, None]:
     """사용자 메시지와 문맥을 바탕으로 OpenAI 답변을 스트리밍(SSE) 방식으로 생성합니다."""
@@ -427,7 +480,7 @@ def generate_chat_stream(prompt: str, metadata: dict, fallback_text: str, histor
 
         client = OpenAI(api_key=settings.openai_api_key)
         system_prompt = (
-            "너는 대전/충청권 지역 정보 공유 서비스 LocalHub의 한국어 챗봇이다. "
+            "너는 대전 놀거리 한국어 챗봇 꿈돌이다. "
             "제공된 컨텍스트 안에서만 답변하고, 사용자의 요청에 대해 정확하고 많은 정보를 제공해야한다. 단, 좌표 정보는 제외한다. "
             "추천 시 2~4개를 이유와 함께 제공한다. "
             "답변은 개조식으로 하며, 마크다운 문법을 적극 활용하라. "
@@ -438,19 +491,37 @@ def generate_chat_stream(prompt: str, metadata: dict, fallback_text: str, histor
             for msg in history[-6:]: messages.append({"role": msg["role"], "content": msg["content"]})
         
         messages.append({"role": "user", "content": prompt})
-        
-        response = client.chat.completions.create(
-            model=settings.openai_chat_model, 
-            messages=messages, 
-            temperature=0.4,
-            stream=True
-        )
+        # 모니터링: 요청 문자수 집계
+        try:
+            _openai_metrics["chars"] += sum(len(m.get("content", "")) for m in messages)
+        except Exception:
+            pass
 
-        for chunk in response:
-            content = chunk.choices[0].delta.content
-            if content:
-                chunk_data = {"type": "content", "text": content}
-                yield f"data: {json.dumps(chunk_data, ensure_ascii=False)}\n\n"
+        try:
+            response = _retry_call(
+                client.chat.completions.create,
+                model=settings.openai_chat_model,
+                messages=messages,
+                temperature=0.4,
+                stream=True,
+            )
+        except Exception as e:
+            logger.exception("OpenAI streaming create failed: %s", str(e))
+            chunk_data = {"type": "content", "text": f"\n\n**[시스템 알림]** 챗봇 응답 생성 중 내부 오류가 발생했습니다: {str(e)}"}
+            yield f"data: {json.dumps(chunk_data, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
+            return
+
+        try:
+            for chunk in response:
+                content = chunk.choices[0].delta.content
+                if content:
+                    chunk_data = {"type": "content", "text": content}
+                    yield f"data: {json.dumps(chunk_data, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            logger.exception("OpenAI streaming iteration failed: %s", str(e))
+            chunk_data = {"type": "content", "text": f"\n\n**[시스템 알림]** 챗봇 응답 생성 중 내부 오류가 발생했습니다: {str(e)}"}
+            yield f"data: {json.dumps(chunk_data, ensure_ascii=False)}\n\n"
     except Exception as e:
         import traceback
         traceback.print_exc()
