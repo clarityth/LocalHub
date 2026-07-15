@@ -119,8 +119,7 @@ def get_list_posts(
         elif search_type == "content":
             stmt = stmt.where(Post.content.ilike(like))
         else:
-            stmt = stmt.where(or_(Post.title.ilike(like), Post.content.ilike(like)))
-            
+            stmt = stmt.where((Post.title.ilike(like)) | (Post.content.ilike(like)))            
     if sort_by == "likes":
         stmt = stmt.order_by(Post.like_count.desc(), Post.created_at.desc())
     else:

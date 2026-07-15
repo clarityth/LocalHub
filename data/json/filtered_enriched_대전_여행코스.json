@@ -1,0 +1,81 @@
+{
+  "region": "대전_충청권",
+  "contentType": "여행코스",
+  "contentTypeId": 25,
+  "total": 1,
+  "items": [
+    {
+      "addr1": "대전광역시 동구 천개동로 41",
+      "addr2": "(추동)",
+      "areacode": "3",
+      "cat1": "C01",
+      "cat2": "C0114",
+      "cat3": "C01140001",
+      "contentid": "2605958",
+      "contenttypeid": "25",
+      "createdtime": "20190612020749",
+      "firstimage": "",
+      "firstimage2": "",
+      "cpyrhtDivCd": "",
+      "mapx": "127.4708541727",
+      "mapy": "36.3733645281",
+      "mlevel": "6",
+      "modifiedtime": "20230811141845",
+      "sigungucode": "2",
+      "tel": "",
+      "title": "도시의 자연 속에서 휴식을 취하다",
+      "zipcode": "34500",
+      "lDongRegnCd": "30",
+      "lDongSignguCd": "110",
+      "lclsSystm1": "C01",
+      "lclsSystm2": "C0114",
+      "lclsSystm3": "C01140001",
+      "distance": "43km",
+      "schedule": "기타",
+      "taketime": "1시간 30분",
+      "theme": "----지자체-----",
+      "detail_info": [
+        {
+          "contentid": "2605958",
+          "contenttypeid": "25",
+          "subnum": "0",
+          "subcontentid": "1907688",
+          "subname": "대청호반길 (대청호오백리길)",
+          "subdetailoverview": "대청호오백리길은 대전(동구, 대덕구)과 충북(청원, 옥천, 보은)에 걸쳐 있는 약 220km의 도보길이며 대청호 주변 자연부락과 소하천, 등산길, 임도, 옛길 등을 포함하고 있다. 또한 서울, 부산에서 대청호까지 거리가 약 오백리 정도가 되어 그 상징적 의미를 더하고 있다.",
+          "subdetailimg": "",
+          "subdetailalt": ""
+        },
+        {
+          "contentid": "2605958",
+          "contenttypeid": "25",
+          "subnum": "1",
+          "subcontentid": "1720749",
+          "subname": "계족산 황톳길",
+          "subdetailoverview": "계족산 황톳길은 2006년 임도 총14.5km에 질 좋은 황토 2만여톤을 투입하여 조성한 맨발 트래킹의 명소이다. 한국관광공사에서 선정한 ‘한국관광 100선’, ‘5월에 꼭 가 볼만한 곳’, 여행전문기자들이 뽑은 ‘다시 찾고 싶은 여행지 33선’에 선정, KBS1TV ‘생로병사의 비밀’에서 대표적인 맨발걷기 장소로 소개된 바 있으며, 연간 100만명 이상이 방문하는 대전 대표 관광지이다.",
+          "subdetailimg": "",
+          "subdetailalt": "대전 계족산 황톳길(10)"
+        },
+        {
+          "contentid": "2605958",
+          "contenttypeid": "25",
+          "subnum": "2",
+          "subcontentid": "1906578",
+          "subname": "천연기념물센터",
+          "subdetailoverview": "천연기념물센터는 자연유산인 천연기념물과 명승에 대한 체계적인 조사·연구와 전시·교육을 통하여 그 가치와 중요성을 국민에게 널리 알리기 위하여 설립된 국가연구기관이다. 천연기념물센터 전시관에는 자연유산에 대한 연구 결과물인 공룡알·발자국 등의 화석, 반달가슴곰, 수달, 독수리 등의 동물 박제 표본, 존도리 소나무 등의 식물 표본 등을 전시하여 전문연구자와 청소년의 학습에 도움을 주고 있으며, 체험 공간, 검색 키오스크, 영상실 등을 통하여 독창적인 체험학습 기회를 제공하고 있다.",
+          "subdetailimg": "http://tong.visitkorea.or.kr/cms/resource/34/2364234_image2_1.jpg",
+          "subdetailalt": "대전_천연기념물센터01"
+        },
+        {
+          "contentid": "2605958",
+          "contenttypeid": "25",
+          "subnum": "3",
+          "subcontentid": "741658",
+          "subname": "한밭수목원",
+          "subdetailoverview": "지리적으로는 정부대전청사와 엑스포과학공원의 중앙 부분에 자리 잡고 있다. 1991년 6월 7일 근린공원으로 지정된 둔산대공원은 총  569천㎡으로 대전예술의전당, 평송청소년문화센터, 시립미술관, 이응노미술관 등  명실상부한 문화 예술의 메카이며, 수목원과 어우러져 문화가 가장 잘 갖추어져 있는  곳이기도 하다.",
+          "subdetailimg": "http://tong.visitkorea.or.kr/cms/resource/68/1092668_image2_1.jpg",
+          "subdetailalt": "둔산대공원 한밭수목원_32"
+        }
+      ]
+    }
+  ]
+}
