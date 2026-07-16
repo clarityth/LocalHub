@@ -122,6 +122,26 @@ def get_list_posts(
     stmt = stmt.limit(limit)
     return [_post_out(post, include_content=False) for post in db.scalars(stmt).all()]
 
+
+@router.get("/posts/popular")
+def get_popular_posts(
+    limit: int = Query(default=5, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    """좋아요 순으로 상위 게시글을 반환합니다. 반환 필드: title, category, place, like_count, view_count, created_at"""
+    posts = db.scalars(select(Post).order_by(Post.like_count.desc(), Post.created_at.desc()).limit(limit)).all()
+    result: list[dict] = []
+    for p in posts:
+        result.append({
+            "title": p.title,
+            "category": p.category,
+            "place": p.place_name,
+            "like_count": p.like_count,
+            "view_count": p.view_count,
+            "created_at": p.created_at.isoformat() if p.created_at else None,
+        })
+    return result
+
 @router.get("/posts/{post_id}", response_model=PostOut)
 def get_single_post(post_id: int, db: Session = Depends(get_db)) -> dict:
     """단일 게시글의 상세 내용을 조회하고 조회수를 1 증가시킵니다."""
