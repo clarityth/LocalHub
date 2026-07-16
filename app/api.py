@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload, selectinload
 import logging
 
-from app.core import get_db
+from app.core import get_db, get_settings
 from app.models import Location, Post, PostLike, utc_now
 from app.schemas import (
     ChatRequest, ChatResponse, LikeOut, LocationDetail, LocationListItem, 
@@ -246,7 +246,11 @@ def delete_existing_post(post_id: int, payload: PasswordBody, db: Session = Depe
 @router.post("/chat")
 def chat_endpoint(payload: ChatRequest, db: Session = Depends(get_db)):
     """사용자의 메시지를 받아 FAISS 검색 후 OpenAI 챗봇 스트리밍 응답을 반환합니다."""
-    from app.services import search_rag_chunks, match_locations_from_chunks, search_posts, fallback_search_locations, _build_prompt, serialize_referenced_items, serialize_sources, _fallback_answer, generate_chat_stream
+    from app.services import (
+        search_rag_chunks, match_locations_from_chunks, search_posts, fallback_search_locations,
+        _build_prompt, serialize_referenced_items, serialize_sources, _fallback_answer, generate_chat_stream,
+        expand_nearby_locations, is_nearby_intent, search_nearby_facilities
+    )
 
     try:
         rag_hits = search_rag_chunks(db, payload.message)
@@ -264,10 +268,20 @@ def chat_endpoint(payload: ChatRequest, db: Session = Depends(get_db)):
                 seen.add(loc.content_id)
                 referenced_items.append(loc)
 
+        # 주변 장소 확장: 기본 동작은 기존 병렬 확장 유지
+        settings = get_settings()
+        if getattr(settings, "require_nearby_intent", False):
+            # 설정이 활성화된 경우에만 의도 기반 주변 탐색 실행
+            if is_nearby_intent(payload.message):
+                referenced_items = search_nearby_facilities(db, referenced_items)
+        else:
+            # 기본값(프로덕션 호환성): 기존 동작 유지
+            referenced_items = expand_nearby_locations(db, referenced_items)
+
         prompt = _build_prompt(payload.message, referenced_items, rag_hits, posts)
         metadata = {
             "type": "metadata",
-            "referenced_items": serialize_referenced_items(referenced_items[:5]),
+            "referenced_items": serialize_referenced_items(referenced_items[:10]),
             "sources": serialize_sources(rag_hits, posts),
         }
         fallback_text = _fallback_answer(referenced_items, rag_hits, posts)

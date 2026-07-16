@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     openai_embedding_model: str = "text-embedding-3-small"
     openai_chat_model: str = "gpt-4o-mini"
     vector_cache_dir: str = ".cache/localhub"
+    # When True, nearby-expansion only runs when user intent indicates 'nearby'
+    require_nearby_intent: bool = False
 
     model_config = SettingsConfigDict(
         env_file=(REPO_ROOT / ".env", REPO_ROOT / "backend" / ".env"),

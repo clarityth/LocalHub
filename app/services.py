@@ -419,6 +419,100 @@ def match_locations_from_chunks(db: Session, hits: list[RagHit], limit: int = 5)
         if len(deduped) >= limit: break
     return deduped
 
+
+# 병렬 확장: 기준 장소 목록을 받아 주변 숙박/음식점을 병합하여 반환합니다.
+def expand_nearby_locations(db: Session, base_locations: list[Location], max_bases: int = 3) -> list[Location]:
+    if not base_locations:
+        return []
+
+    seen = {loc.content_id for loc in base_locations}
+    expanded = list(base_locations)
+
+    candidates = db.scalars(
+        select(Location).options(joinedload(Location.content_type))
+        .where(Location.content_type_id.in_([32, 39]))
+    ).all()
+
+    def _get_nearby(base_loc: Location) -> list[Location]:
+        nearby = []
+        for cand in candidates:
+            if cand.content_id == base_loc.content_id:
+                continue
+            try:
+                dist = haversine_km(base_loc.mapy, base_loc.mapx, cand.mapy, cand.mapx)
+            except Exception:
+                continue
+            if dist <= 2.0:
+                nearby.append((dist, cand))
+        nearby.sort(key=lambda x: x[0])
+        return [cand for dist, cand in nearby[:4]]
+
+    target_bases = base_locations[:max_bases]
+
+    with ThreadPoolExecutor(max_workers=max_bases) as executor:
+        results = executor.map(_get_nearby, target_bases)
+
+    for nearby_list in results:
+        for cand in nearby_list:
+            if cand.content_id not in seen:
+                seen.add(cand.content_id)
+                expanded.append(cand)
+
+    return expanded
+
+def is_nearby_intent(message: str) -> bool:
+    """사용자 메시지에서 주변 장소 탐색 의도를 확인합니다."""
+    keywords = ["근처", "주변", "인근", "가까운", "주위", "맛집", "식당", "숙소", "호텔"]
+    if not message:
+        return False
+    msg = message.lower()
+    return any(keyword in msg for keyword in keywords)
+
+def search_nearby_facilities(db: Session, base_locations: list[Location], radius_km: float = 2.0, limit_per_base: int = 3) -> list[Location]:
+    """DB Bounding Box 필터링 후 메모리에서 정확한 거리를 계산하여 주변 장소를 병합합니다."""
+    if not base_locations:
+        return []
+
+    expanded = list(base_locations)
+    seen_ids = {loc.content_id for loc in base_locations}
+
+    # 위도 1도는 약 111km, 한국 기준 경도 1도는 약 90km입니다.
+    lat_delta = radius_km / 111.0
+    lon_delta = radius_km / 90.0
+
+    for base in base_locations:
+        if not base.mapx or not base.mapy:
+            continue
+
+        stmt = select(Location).options(joinedload(Location.content_type)).where(
+            Location.content_type_id.in_([32, 39]),
+            Location.content_id != base.content_id,
+            Location.mapy.between(base.mapy - lat_delta, base.mapy + lat_delta),
+            Location.mapx.between(base.mapx - lon_delta, base.mapx + lon_delta)
+        )
+        candidates = db.scalars(stmt).all()
+
+        nearby = []
+        for cand in candidates:
+            if not cand.mapx or not cand.mapy:
+                continue
+            
+            try:
+                dist = haversine_km(base.mapy, base.mapx, cand.mapy, cand.mapx)
+            except Exception:
+                continue
+            if dist <= radius_km:
+                nearby.append((dist, cand))
+
+        nearby.sort(key=lambda x: x[0])
+        
+        for dist, cand in nearby[:limit_per_base]:
+            if cand.content_id not in seen_ids:
+                seen_ids.add(cand.content_id)
+                expanded.append(cand)
+
+    return expanded
+
 def search_posts(db: Session, message: str, limit: int = 3) -> list[Post]:
     tokens = tokenize(message)
     if not tokens: return []
