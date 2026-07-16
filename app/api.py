@@ -268,20 +268,47 @@ def chat_endpoint(payload: ChatRequest, db: Session = Depends(get_db)):
                 seen.add(loc.content_id)
                 referenced_items.append(loc)
 
-        # 주변 장소 확장: 기본 동작은 기존 병렬 확장 유지
+        # 주변 장소 확장: API의 계산 로직(하버사인 + bounding box)을 사용하도록 변경
         settings = get_settings()
+        # 기준이 된 원래 장소 목록을 보관(거리 계산의 기준점)
+        original_bases = list(referenced_items)
+
+        # 기본값: API와 동일하게 bounding-box 필터 후 하버사인으로 정확한 거리 계산
         if getattr(settings, "require_nearby_intent", False):
-            # 설정이 활성화된 경우에만 의도 기반 주변 탐색 실행
             if is_nearby_intent(payload.message):
-                referenced_items = search_nearby_facilities(db, referenced_items)
+                referenced_items = search_nearby_facilities(db, referenced_items, radius_km=2.0, limit_per_base=4)
         else:
-            # 기본값(프로덕션 호환성): 기존 동작 유지
-            referenced_items = expand_nearby_locations(db, referenced_items)
+            referenced_items = search_nearby_facilities(db, referenced_items, radius_km=2.0, limit_per_base=4)
 
         prompt = _build_prompt(payload.message, referenced_items, rag_hits, posts)
+        # 직렬화는 기존 API 응답 포맷을 유지하도록 서비스 함수를 사용합니다.
+        metadata_items = serialize_referenced_items(referenced_items[:10])
+        # 챗봇 전송용 메타데이터에만 distance_km을 추가합니다 (API 반환값에는 영향 없음)
+        if original_bases:
+            for item in metadata_items:
+                try:
+                    mapx = item.get("mapx")
+                    mapy = item.get("mapy")
+                    if mapx is None or mapy is None:
+                        continue
+                    min_dist = None
+                    for base in original_bases:
+                        if not getattr(base, 'mapx', None) or not getattr(base, 'mapy', None):
+                            continue
+                        try:
+                            d = haversine_km(base.mapy, base.mapx, mapy, mapx)
+                        except Exception:
+                            continue
+                        if min_dist is None or d < min_dist:
+                            min_dist = d
+                    if min_dist is not None:
+                        item["distance_km"] = round(min_dist, 2)
+                except Exception:
+                    continue
+
         metadata = {
             "type": "metadata",
-            "referenced_items": serialize_referenced_items(referenced_items[:10]),
+            "referenced_items": metadata_items,
             "sources": serialize_sources(rag_hits, posts),
         }
         fallback_text = _fallback_answer(referenced_items, rag_hits, posts)

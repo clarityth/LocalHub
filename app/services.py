@@ -531,7 +531,10 @@ def serialize_sources(rag_hits: list[RagHit], posts: list[Post] | None = None) -
     return sources
 
 def serialize_referenced_items(locations: list[Location]) -> list[dict]:
+    """참조된 장소들을 직렬화합니다 (API 응답용, 부작용 없음)."""
     return [location_list_item(loc) for loc in locations]
+
+    return items
 
 # AI 챗봇
 
